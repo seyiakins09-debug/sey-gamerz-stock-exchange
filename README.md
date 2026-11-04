@@ -38,3 +38,11 @@ Then open `http://localhost:3000`.
 - Start command: `npm start`
 
 All funds and share prices are simulated game values; no real money or brokerage accounts are involved.
+## Player reconnection
+
+- If a phone call or temporary network interruption disconnects a player, the room keeps that player's game record instead of removing it.
+- The browser automatically attempts to rejoin when its Socket.IO connection returns.
+- If the player refreshes or reopens the game, use the **same room key and exact same nickname** to rejoin. The original player number, virtual cash, holdings, trade history, and progress are restored.
+- A returning player does not need to re-enter starting capital; the saved original amount is kept.
+- The host and leaderboard can see whether a player is online or disconnected.
+- Reconnection works while the game server and room are still running. A server restart or an ended room cannot restore an in-memory room.
