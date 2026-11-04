@@ -46,3 +46,15 @@ All funds and share prices are simulated game values; no real money or brokerage
 - A returning player does not need to re-enter starting capital; the saved original amount is kept.
 - The host and leaderboard can see whether a player is online or disconnected.
 - Reconnection works while the game server and room are still running. A server restart or an ended room cannot restore an in-memory room.
+
+
+## Stock Exchange reconnection fix (updated)
+
+- Fixed a browser startup error: the reconnect form fields were accessed before the `$` DOM helper was initialized. This could stop `app.js` from running whenever a saved reconnect profile existed.
+- Improved server-side reconnect handling for a brief disconnect race. When the same room key and nickname are used, the server checks whether the previous Socket.IO connection is actually active instead of relying only on a stale `connected` flag.
+- Reconnected players keep their original player number, virtual cash, starting capital, holdings, trade history, and current room progress.
+- During an in-session temporary network interruption, the browser attempts to rejoin automatically when Socket.IO reconnects.
+- If refreshing/reopening the page, the saved room key and nickname are restored in the join form. Press **JOIN ROOM** to recover the player.
+
+### Important limitation
+Room state is stored in server memory. Reconnection can restore a player only while the same room is still running on the same server process. A Render restart, server redeploy, or ended room clears the room and its player data.
