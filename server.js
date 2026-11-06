@@ -23,8 +23,10 @@ function makeRoom(key,hostId){
  return rooms[key]={key,hostId,hostName:'HOST',players:{},nextPlayerNumber:1,tradeFeed:[],tradeCount:0,set:1,started:false,paused:false,ended:false,deadline:null,remaining:SET_MS,companies,lastDividendAt:null,pausedAt:null,interval:null};
 }
 function portfolio(p,r){return Object.entries(p.holdings).reduce((s,[sym,qty])=>s+qty*r.companies[sym].price,0)}
-function netWorth(p,r){return p.cash+portfolio(p,r)}
-function stateOf(r){return {key:r.key,set:r.set,started:r.started,paused:r.paused,ended:r.ended,remaining:r.started&&!r.paused&&!r.ended?Math.max(0,r.deadline-Date.now()):r.remaining,companies:r.companies,players:Object.values(r.players).map(p=>({id:p.id,playerNumber:p.playerNumber,name:p.name,startingCash:p.startingCash,cash:p.cash,holdings:p.holdings,portfolio:portfolio(p,r),netWorth:netWorth(p,r),profit:netWorth(p,r)-p.startingCash,trades:p.trades.slice(-8),connected:p.connected!==false})),tradeFeed:r.tradeFeed};}
+// Total wealth includes spendable cash, current share value, realized profits and dividends.
+// Realized losses are already deducted from cash, so they are not subtracted twice.
+function totalWealth(p,r){return p.cash+portfolio(p,r)+p.totalProfit+p.dividendsEarned}
+function stateOf(r){return {key:r.key,set:r.set,started:r.started,paused:r.paused,ended:r.ended,remaining:r.started&&!r.paused&&!r.ended?Math.max(0,r.deadline-Date.now()):r.remaining,companies:r.companies,players:Object.values(r.players).map(p=>({id:p.id,playerNumber:p.playerNumber,name:p.name,startingCash:p.startingCash,cash:p.cash,holdings:p.holdings,costBasis:p.costBasis,portfolio:portfolio(p,r),totalWealth:totalWealth(p,r),totalProfit:p.totalProfit,totalLoss:p.totalLoss,dividendsEarned:p.dividendsEarned,trades:p.trades.slice(-12),connected:p.connected!==false})),tradeFeed:r.tradeFeed};}
 function emit(r){io.to(r.key).emit('state',stateOf(r))}
 function fail(s,m){s.emit('notice',{type:'error',message:m})}
 function feed(r,item){item.tradeNumber=++r.tradeCount;item.time=new Date().toISOString();r.tradeFeed.push(item);if(r.tradeFeed.length>MAX_FEED)r.tradeFeed.shift();}
@@ -43,34 +45,41 @@ function payDividends(r){
    if(shares<=0)continue;
    const amount=shares*c.price*c.rate;
    if(amount<=0)continue;
-   p.cash+=amount;
-   const entry={playerNumber:p.playerNumber,player:p.name,side:'dividend',symbol:sym,company:c.name,quantity:shares,price:c.price,total:amount,details:'Dividend payout',cashAfter:p.cash,netWorthAfter:netWorth(p,r)};
+   p.dividendsEarned+=amount;
+   const entry={playerNumber:p.playerNumber,player:p.name,side:'dividend',symbol:sym,company:c.name,quantity:shares,price:c.price,total:amount,details:'Dividend recorded separately; not added to cash or trading profit',cashAfter:p.cash,dividendsAfter:p.dividendsEarned,totalWealthAfter:totalWealth(p,r)};
    p.trades.push(entry);feed(r,entry);
   }
  }
 }
 io.on('connection',socket=>{
  socket.on('createRoom',({name}={})=>{let key;do{key=Math.random().toString(36).slice(2,7).toUpperCase()}while(rooms[key]);const r=makeRoom(key,socket.id);r.hostName=(name||'Host').trim().slice(0,24)||'Host';socket.join(key);socket.data.room=key;socket.data.role='host';socket.emit('joined',{role:'host',key,name:r.hostName});emit(r);});
- socket.on('joinRoom',({key,name,startingCash}={})=>{key=(key||'').trim().toUpperCase();const r=rooms[key];if(!r)return fail(socket,'Room key not found.');if(r.ended)return fail(socket,'This game has ended.');const cash=Number(startingCash);const nickname=(name||'Player').trim().slice(0,24)||'Player';const normalized=nickname.toLocaleLowerCase();const existing=Object.entries(r.players).find(([,p])=>p.name.toLocaleLowerCase()===normalized);let p,reconnected=false;if(existing){const [oldId,oldPlayer]=existing;
-    // A stale connected flag can remain briefly after a network drop. Check the
-    // actual Socket.IO connection before rejecting a returning player.
-    const oldSocket=io.sockets.sockets.get(oldId);
-    if(oldPlayer.connected && oldSocket && oldSocket.connected)
-      return fail(socket,'That player name is already connected. If this is your account, disconnect the other session first.');
-    oldPlayer.connected=false;
-    oldPlayer.disconnectedAt=oldPlayer.disconnectedAt||Date.now();
-    delete r.players[oldId];
-    p=oldPlayer;p.id=socket.id;p.connected=true;p.disconnectedAt=null;
-    r.players[socket.id]=p;reconnected=true;
-  }else{if(!Number.isFinite(cash)||cash<=0||cash>Number.MAX_SAFE_INTEGER)return fail(socket,'Enter a valid starting amount greater than zero for a new player.');if(Object.keys(r.players).length>=50)return fail(socket,'Room is full (50 players maximum).');const holdings={};COMPANIES.forEach(c=>holdings[c.symbol]=0);p=r.players[socket.id]={id:socket.id,playerNumber:r.nextPlayerNumber++,name:nickname,startingCash:cash,cash,holdings,trades:[],connected:true};}socket.join(key);socket.data.room=key;socket.data.role='player';socket.emit('joined',{role:'player',key,name:p.name,playerNumber:p.playerNumber,startingCash:p.startingCash,reconnected});emit(r);});
+ socket.on('joinRoom',({key,name,startingCash}={})=>{key=(key||'').trim().toUpperCase();const r=rooms[key];if(!r)return fail(socket,'Room key not found.');if(r.ended)return fail(socket,'This game has ended.');const cash=Number(startingCash);const nickname=(name||'Player').trim().slice(0,24)||'Player';const normalized=nickname.toLocaleLowerCase();const existing=Object.entries(r.players).find(([,p])=>p.name.toLocaleLowerCase()===normalized);let p,reconnected=false;if(existing){const [oldId,oldPlayer]=existing;if(oldPlayer.connected)return fail(socket,'That player name is already connected. If this is your account, wait a moment and try again.');delete r.players[oldId];p=oldPlayer;p.costBasis=p.costBasis||Object.fromEntries(COMPANIES.map(c=>[c.symbol,0]));p.totalProfit=p.totalProfit||0;p.totalLoss=p.totalLoss||0;p.dividendsEarned=p.dividendsEarned||0;p.id=socket.id;p.connected=true;r.players[socket.id]=p;reconnected=true;}else{if(!Number.isFinite(cash)||cash<=0||cash>Number.MAX_SAFE_INTEGER)return fail(socket,'Enter a valid starting amount greater than zero for a new player.');if(Object.keys(r.players).length>=50)return fail(socket,'Room is full (50 players maximum).');const holdings={};COMPANIES.forEach(c=>holdings[c.symbol]=0);p=r.players[socket.id]={id:socket.id,playerNumber:r.nextPlayerNumber++,name:nickname,startingCash:cash,cash,holdings,costBasis:Object.fromEntries(COMPANIES.map(c=>[c.symbol,0])),totalProfit:0,totalLoss:0,dividendsEarned:0,trades:[],connected:true};}socket.join(key);socket.data.room=key;socket.data.role='player';socket.emit('joined',{role:'player',key,name:p.name,playerNumber:p.playerNumber,startingCash:p.startingCash,reconnected});emit(r);});
  socket.on('hostAction',({action,value}={})=>{const r=rooms[socket.data.room];if(!r||socket.data.role!=='host'||r.hostId!==socket.id)return;
  if(action==='start'&&!r.ended){r.started=true;r.paused=false;r.deadline=Date.now()+r.remaining;if(r.lastDividendAt===null)r.lastDividendAt=Date.now();if(!r.interval)r.interval=setInterval(()=>tick(r),1000);}
  if(action==='pause'&&r.started&&!r.paused){r.remaining=Math.max(0,r.deadline-Date.now());r.paused=true;r.pausedAt=Date.now();}
  if(action==='resume'&&r.started&&r.paused){r.paused=false;r.deadline=Date.now()+r.remaining;if(r.pausedAt&&r.lastDividendAt!==null)r.lastDividendAt+=Date.now()-r.pausedAt;r.pausedAt=null;}
  if(action==='next'||action==='set'){if(r.interval)clearInterval(r.interval);r.interval=null;r.set=action==='set'?Math.min(10,Math.max(1,Number(value)||1)):Math.min(10,r.set+1);r.started=false;r.paused=false;r.ended=false;r.remaining=SET_MS;r.deadline=null;r.lastDividendAt=null;r.pausedAt=null;}
  if(action==='end'){r.ended=true;r.started=false;r.paused=false;if(r.interval)clearInterval(r.interval);r.interval=null;}emit(r);});
- socket.on('trade',({side,symbol,quantity}={})=>{const r=rooms[socket.data.room],p=r&&r.players[socket.id];if(!r||!p||socket.data.role!=='player')return;if(!r.started||r.paused||r.ended)return fail(socket,'Trading is available only while the set is running.');const c=r.companies[symbol],q=Number(quantity);if(!c||!Number.isFinite(q)||q<=0||q>1e12)return fail(socket,'Enter a valid number of shares.');const total=q*c.price;if(!Number.isFinite(total))return fail(socket,'That trade is too large.');if(side==='buy'){if(total>p.cash+1e-8)return fail(socket,'Not enough virtual cash.');p.cash-=total;p.holdings[symbol]+=q;}else if(side==='sell'){if(q>p.holdings[symbol]+1e-10)return fail(socket,'You do not own enough shares.');p.holdings[symbol]-=q;p.cash+=total;}else return;
- const item={playerNumber:p.playerNumber,player:p.name,side,symbol,company:c.name,quantity:q,price:c.price,total,cashAfter:p.cash,netWorthAfter:netWorth(p,r)};p.trades.push(item);feed(r,item);io.to(r.key).emit('tradeNotice',{player:p.name,side,symbol,quantity:q,total});emit(r);});
+ socket.on('trade',({side,symbol,quantity}={})=>{const r=rooms[socket.data.room],p=r&&r.players[socket.id];if(!r||!p||socket.data.role!=='player')return;if(!r.started||r.paused||r.ended)return fail(socket,'Trading is available only while the set is running.');const c=r.companies[symbol],q=Number(quantity);if(!c||!Number.isFinite(q)||q<=0||q>1e12)return fail(socket,'Enter a valid number of shares.');const total=q*c.price;if(!Number.isFinite(total))return fail(socket,'That trade is too large.');let item;
+ if(side==='buy'){
+  if(total>p.cash+1e-8)return fail(socket,'Not enough virtual cash.');
+  p.cash-=total;p.holdings[symbol]+=q;p.costBasis[symbol]=(p.costBasis[symbol]||0)+total;
+  item={playerNumber:p.playerNumber,player:p.name,side,symbol,company:c.name,quantity:q,price:c.price,total,purchaseCost:total,cashAfter:p.cash,details:'Purchase cost added to share cost basis'};
+ }else if(side==='sell'){
+  if(q>p.holdings[symbol]+1e-10)return fail(socket,'You do not own enough shares.');
+  const sharesBefore=p.holdings[symbol],basisBefore=p.costBasis[symbol]||0;
+  const costReturned=q>=sharesBefore-1e-10?basisBefore:basisBefore*(q/sharesBefore);
+  const realized=total-costReturned;
+  p.holdings[symbol]=Math.max(0,sharesBefore-q);
+  p.costBasis[symbol]=p.holdings[symbol]<=1e-10?0:Math.max(0,basisBefore-costReturned);
+  // Return the original capital to cash. Realized gains are tracked separately and cannot be spent.
+  p.cash+=costReturned;
+  if(realized>=0){p.totalProfit+=realized;}
+  else {const loss=Math.abs(realized);p.totalLoss+=loss;p.cash-=loss;}
+  item={playerNumber:p.playerNumber,player:p.name,side,symbol,company:c.name,quantity:q,price:c.price,total,saleValue:total,principalReturned:costReturned,realizedProfit:Math.max(0,realized),realizedLoss:Math.max(0,-realized),cashAfter:p.cash,totalProfitAfter:p.totalProfit,totalLossAfter:p.totalLoss,details:'Original purchase cost returned to cash; profit/loss recorded separately'};
+ }else return;
+ item.totalWealthAfter=totalWealth(p,r);
+ p.trades.push(item);feed(r,item);io.to(r.key).emit('tradeNotice',{player:p.name,side,symbol,quantity:q,total});emit(r);});
  socket.on('disconnect',()=>{const r=rooms[socket.data.room];if(r&&socket.data.role==='player'&&r.players[socket.id]){r.players[socket.id].connected=false;r.players[socket.id].disconnectedAt=Date.now();emit(r);}});
 });
 server.listen(PORT,()=>console.log('SEY GAMERZ Stock Exchange running on '+PORT));

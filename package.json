@@ -1,8 +1,13 @@
 {
-  "name":"sey-gamerz-stock-exchange",
-  "version":"1.0.0",
-  "description":"SEY GAMERZ simulated multiplayer stock exchange game",
-  "main":"server.js",
-  "scripts":{"start":"node server.js"},
-  "dependencies":{"express":"^4.21.2","socket.io":"^4.8.1"}
+  "name": "sey-gamerz-stock-exchange",
+  "version": "1.0.0",
+  "description": "SEY GAMERZ simulated multiplayer stock exchange game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
 }

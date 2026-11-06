@@ -8,7 +8,7 @@ A room-based simulated stock market game built with Node.js, Express and Socket.
 - 10 fictional SEY GAMERZ companies available in every set.
 - Simulated share prices fluctuate while a set is running.
 - Players buy and sell shares using virtual cash only.
-- Dividends are paid every 2 minutes of active game time based on current share market value and the company's dynamic dividend rate.
+- Dividend earnings are calculated every 2 minutes of active game time based on current share market value and the company's dynamic dividend rate; they are recorded separately and do not change cash balance.
 - Dividend rates adjust with market price movement and are bounded for gameplay.
 - Host is spectator-only and can start, pause, resume, jump sets, advance, or end the game.
 - Host trade floor feed shows buys, sells, and company-by-company dividend payments.
@@ -48,13 +48,11 @@ All funds and share prices are simulated game values; no real money or brokerage
 - Reconnection works while the game server and room are still running. A server restart or an ended room cannot restore an in-memory room.
 
 
-## Stock Exchange reconnection fix (updated)
-
-- Fixed a browser startup error: the reconnect form fields were accessed before the `$` DOM helper was initialized. This could stop `app.js` from running whenever a saved reconnect profile existed.
-- Improved server-side reconnect handling for a brief disconnect race. When the same room key and nickname are used, the server checks whether the previous Socket.IO connection is actually active instead of relying only on a stale `connected` flag.
-- Reconnected players keep their original player number, virtual cash, starting capital, holdings, trade history, and current room progress.
-- During an in-session temporary network interruption, the browser attempts to rejoin automatically when Socket.IO reconnects.
-- If refreshing/reopening the page, the saved room key and nickname are restored in the join form. Press **JOIN ROOM** to recover the player.
-
-### Important limitation
-Room state is stored in server memory. Reconnection can restore a player only while the same room is still running on the same server process. A Render restart, server redeploy, or ended room clears the room and its player data.
+## Financial system update
+- Every player has a starting cash balance, current available cash, share portfolio value, total realized profit, total realized loss, dividend earnings, and total wealth.
+- Buying shares deducts the purchase price from cash and adds it to that share's average cost basis.
+- When shares are sold, the original purchase cost (cost basis) is returned to cash. Realized profit is recorded separately and is not spendable cash.
+- If a sale is below its cost basis, the loss is recorded separately and deducted from cash.
+- Dividends are tracked separately. They do not alter cash or realized trading profit.
+- Total Wealth leaderboard ranking = current cash + current portfolio market value + realized profit + dividends earned. Realized losses are already deducted from cash and are not subtracted a second time.
+- Trade history records principal returned, sale value, realized profit/loss, and dividend payments separately.
